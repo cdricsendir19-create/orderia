@@ -1,0 +1,6 @@
+{
+  "crons": [
+    { "path": "/api/integrations/shopify/worker", "schedule": "*/5 * * * *" },
+    { "path": "/api/v1/shipping/worker", "schedule": "*/5 * * * *" }
+  ]
+}

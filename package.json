@@ -1,0 +1,32 @@
+{
+  "name": "orderia",
+  "private": true,
+  "version": "4.4.1",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "prisma:generate": "prisma generate",
+    "typecheck": "tsc --noEmit",
+    "release:check": "node scripts/release-security-check.cjs",
+    "test:contracts": "node scripts/contract-test.cjs",
+    "release:gate": "npm run release:check && npm run test:contracts && npm run migrations:check && node scripts/validate-release.mjs",
+    "migrations:check": "node scripts/migrations-check.cjs"
+  },
+  "dependencies": {
+    "@prisma/client": "latest",
+    "bcryptjs": "latest",
+    "jose": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "prisma": "latest",
+    "typescript": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}

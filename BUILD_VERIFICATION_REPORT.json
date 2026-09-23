@@ -1,0 +1,10 @@
+{
+  "version": "3.9.0",
+  "status": "BLOCKED",
+  "npm_install": "NOT_VERIFIED",
+  "prisma_generate": "NOT_RUN",
+  "typecheck": "NOT_RUN",
+  "build": "NOT_RUN",
+  "reason": "The dependency installation attempt was interrupted by the execution environment before completion; therefore no successful build is claimed.",
+  "already_verified": "Orderia 3.8 contract suite: 14/14 passed."
+}
