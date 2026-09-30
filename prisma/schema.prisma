@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Merchant {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+  customers Customer[]
+  orders    Order[]
+  shipments Shipment[]
+  providers ShippingProvider[]
+}
+
+model User {
+  id         String   @id @default(cuid())
+  merchantId String
+  email      String
+  name       String?
+  createdAt  DateTime @default(now())
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  @@unique([merchantId, email])
+  @@index([merchantId])
+}
+
+model Customer {
+  id         String   @id @default(cuid())
+  merchantId String
+  name       String
+  phone      String
+  wilayaId   Int?
+  address    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orders     Order[]
+  @@index([merchantId])
+  @@index([merchantId, phone])
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  merchantId String
+  customerId String?
+  status     String      @default("pending")
+  total      Int         @default(0)
+  currency   String      @default("DZD")
+  notes      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  merchant   Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customer   Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items      OrderItem[]
+  shipment   Shipment?
+  @@index([merchantId])
+  @@index([merchantId, status])
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String?
+  title     String
+  quantity  Int    @default(1)
+  unitPrice Int    @default(0)
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  @@index([orderId])
+}
+
+model Shipment {
+  id          String            @id @default(cuid())
+  merchantId  String
+  orderId     String            @unique
+  providerId  String?
+  trackingNo  String?
+  method      String            @default("home")
+  wilayaId    Int?
+  fee         Int               @default(0)
+  status      String            @default("pending")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  merchant    Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider    ShippingProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  @@index([merchantId])
+  @@index([merchantId, status])
+}
+
+model ShippingProvider {
+  id         String     @id @default(cuid())
+  merchantId String
+  name       String
+  code       String
+  enabled    Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  merchant   Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  shipments  Shipment[]
+  @@unique([merchantId, code])
+  @@index([merchantId])
+}
