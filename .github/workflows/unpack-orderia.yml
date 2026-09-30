@@ -1,0 +1,35 @@
+name: Unpack Orderia RC v9
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unpack Orderia
+        run: |
+          rm -rf /tmp/orderia
+          mkdir -p /tmp/orderia
+          unzip -o "Orderia-5.5.0-release-candidate-v9.zip" -d /tmp/orderia
+          if [ -f /tmp/orderia/package.json ]; then
+            cp -R /tmp/orderia/. .
+          else
+            ROOT=$(find /tmp/orderia -name package.json -print -quit | xargs dirname)
+            cp -R "$ROOT"/. .
+          fi
+
+      - name: Commit Orderia files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git diff --cached --quiet || git commit -m "إضافة Orderia 5.5.0 RC v9"
+          git push
