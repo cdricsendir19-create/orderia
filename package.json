@@ -6,19 +6,21 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate deploy"
   },
   "dependencies": {
     "next": "15.5.7",
     "react": "19.1.1",
     "react-dom": "19.1.1",
-    "@prisma/client": "^6.16.0"
+    "@prisma/client": "6.16.0"
   },
   "devDependencies": {
     "@types/node": "22.15.21",
     "@types/react": "19.1.5",
     "@types/react-dom": "19.1.5",
     "typescript": "5.8.3",
-    "prisma": "^6.16.0"
+    "prisma": "6.16.0"
   }
 }
