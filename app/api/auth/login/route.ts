@@ -24,8 +24,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const keys = JSON.parse(raw) as Record<string, string>;
-    const merchantId = keys[supplied];
+    let merchantId: string | undefined;
+
+try {
+  const keys = JSON.parse(raw) as Record<string, string>;
+  merchantId = keys[supplied];
+} catch {
+  if (supplied === raw) {
+    merchantId = "merchant_001";
+  }
+}
 
     if (!merchantId) {
       return NextResponse.json(
