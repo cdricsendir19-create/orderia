@@ -56,10 +56,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     const orderId = String(body.orderId ?? "").trim();
-
     const method =
       body.method === "stopdesk" ? "stopdesk" : "home";
-
     const wilayaId = Number(body.wilayaId);
 
     if (!orderId) {
@@ -112,8 +110,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
-          error:
-            "No IMIR rate available for this wilaya and method",
+          error: "No IMIR rate available for this wilaya and method",
         },
         { status: 404 },
       );
@@ -130,28 +127,20 @@ export async function POST(request: NextRequest) {
 
     const product =
       order.items
-        .map(
-          (item) =>
-            `${item.title} x${item.quantity}`,
-        )
+        .map((item) => `${item.title} x${item.quantity}`)
         .join(", ")
-        .slice(0, 255) ||
-      `Commande ${order.id}`;
+        .slice(0, 255) || `Commande ${order.id}`;
 
     const imirPath =
-      process.env.IMIR_CREATE_PARCEL_PATH ||
-      "/api/v1/orders";
+      process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/orders";
 
     const imirResponse = await imirRequest<unknown>({
       path: imirPath,
       method: "POST",
       body: {
-        nom_client:
-          order.customer?.name ?? "Client Orderia",
-        telephone:
-          order.customer?.phone ?? "",
-        adresse:
-          order.customer?.address ?? "",
+        nom_client: order.customer?.name ?? "Client Orderia",
+        telephone: order.customer?.phone ?? "",
+        adresse: order.customer?.address ?? "",
         code_wilaya: wilayaId,
         commune,
         montant: order.total + quote.fee,
@@ -163,8 +152,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const trackingNo =
-      extractTrackingNo(imirResponse);
+    const trackingNo = extractTrackingNo(imirResponse);
 
     const shipment = await db.shipment.create({
       data: {
@@ -181,9 +169,7 @@ export async function POST(request: NextRequest) {
     await db.order.update({
       where: { id: order.id },
       data: {
-        status: trackingNo
-          ? "shipped"
-          : "processing",
+        status: trackingNo ? "shipped" : "processing",
       },
     });
 
@@ -199,4 +185,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-       
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to create shipment",
+      },
+      { status: 400 },
+    );
+  }
+}
