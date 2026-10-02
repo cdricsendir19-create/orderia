@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getImirRate } from "@/lib/shipping/imir-rates";
+import { imirRequest } from "@/lib/shipping/imir-client";
 import { isAuthResponse, requireMerchant } from "@/lib/api-auth";
 
 export async function POST(request: NextRequest) {
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest) {
       include: {
         customer: true,
         shipment: true,
+        items: true,
       },
     });
 
@@ -70,6 +72,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const commune = String(body.commune ?? "").trim();
+
+    if (!commune) {
+      return NextResponse.json(
+        { ok: false, error: "commune is required" },
+        { status: 400 },
+      );
+    }
+
+    const product =
+      order.items
+        .map((item) => `${item.title} x${item.quantity}`)
+        .join(", ")
+        .slice(0, 255) || `Commande ${order.id}`;
+
+    const imirPath =
+      process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/orders";
+
+    const imirResponse = await imirRequest<unknown>({
+      path: imirPath,
+      method: "POST",
+      body: {
+        nom_client: order.customer?.name ?? "Client Orderia",
+        telephone: order.customer?.phone ?? "",
+        adresse: order.customer?.address ?? "",
+        code_wilaya: wilayaId,
+        commune,
+        montant: order.total + quote.fee,
+        produit: product,
+        remarque: order.notes ?? "",
+        weight: Number(body.weight ?? 1),
+        reference: order.id,
+        stop_desk: method === "stopdesk" ? 1 : 0,
+      },
+    });
+
     const shipment = await db.shipment.create({
       data: {
         merchantId: auth.merchantId,
@@ -77,14 +115,14 @@ export async function POST(request: NextRequest) {
         method,
         wilayaId,
         fee: quote.fee,
-        status: "pending",
+        status: "shipped",
       },
     });
 
     await db.order.update({
       where: { id: order.id },
       data: {
-        status: "processing",
+        status: "shipped",
       },
     });
 
@@ -93,6 +131,7 @@ export async function POST(request: NextRequest) {
       provider: "imir",
       shipment,
       quote,
+      imir: imirResponse,
     });
   } catch (error) {
     return NextResponse.json(
