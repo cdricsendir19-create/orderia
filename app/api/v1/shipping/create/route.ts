@@ -1,106 +1,271 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getImirRate } from "@/lib/shipping/imir-rates";
 import { imirRequest } from "../../../../../lib/shipping/imir-client";
 import { isAuthResponse, requireMerchant } from "@/lib/api-auth";
 
+function extractTrackingNo(value: unknown): string | null {
+  const keys = [
+    "trackingNo",
+    "tracking_no",
+    "tracking",
+    "tracking_number",
+    "trackingNumber",
+    "code",
+    "code_suivi",
+    "numero_suivi",
+    "parcel_code",
+    "order_code",
+    "id_colis",
+  ];
+
+  const visit = (node: unknown): string | null => {
+    if (!node || typeof node !== "object") return null;
+
+    const record = node as Record<string, unknown>;
+
+    for (const key of keys) {
+      const candidate = record[key];
+
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+
+      if (typeof candidate === "number") {
+        return String(candidate);
+      }
+    }
+
+    for (const child of Object.values(record)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  return visit(value);
+}
+
 export async function POST(request: NextRequest) {
   const auth = requireMerchant(request);
+
   if (isAuthResponse(auth)) return auth;
 
-  const path = process.env.IMIR_CREATE_PARCEL_PATH;
-  if (!path) return NextResponse.json({ ok: false, error: "IMIR_CREATE_PARCEL_PATH is not configured" }, { status: 503 });
-
-  let requestedOrderId = "";
   try {
     const body = await request.json();
-    if (!body.orderId || typeof body.orderId !== "string") {
-      return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
+
+    const orderId = String(body.orderId ?? "").trim();
+    const method =
+      body.method === "stopdesk" ? "stopdesk" : "home";
+    const wilayaId = Number(body.wilayaId);
+
+    if (!orderId) {
+      return NextResponse.json(
+        { ok: false, error: "orderId is required" },
+        { status: 400 },
+      );
     }
-    requestedOrderId = body.orderId;
-    if (body.merchantId !== undefined && body.merchantId !== auth.merchantId) {
-      return NextResponse.json({ ok: false, error: "merchantId must match the authenticated merchant" }, { status: 400 });
+
+    if (
+      !Number.isInteger(wilayaId) ||
+      wilayaId < 1 ||
+      wilayaId > 58
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "wilayaId must be between 1 and 58",
+        },
+        { status: 400 },
+      );
+    }
+
+    const commune = String(body.commune ?? "").trim();
+
+    if (!commune) {
+      return NextResponse.json(
+        { ok: false, error: "commune is required" },
+        { status: 400 },
+      );
     }
 
     const order = await db.order.findFirst({
-      where: { id: body.orderId, merchantId: auth.merchantId },
-      include: { customer: true, items: true, shipment: true },
+      where: {
+        id: orderId,
+        merchantId: auth.merchantId,
+      },
+      include: {
+        customer: true,
+        items: true,
+        shipment: true,
+      },
     });
-    if (!order) return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
-    if (order.shipment) return NextResponse.json({ ok: false, error: "Order already has a shipment", shipment: order.shipment }, { status: 409 });
 
-    const method = body.method === "stopdesk" ? "stopdesk" : "home";
-    const wilayaId = Number(body.wilayaId ?? order.customer?.wilayaId);
-    if (!Number.isInteger(wilayaId) || wilayaId < 1) {
-      return NextResponse.json({ ok: false, error: "wilayaId is required" }, { status: 400 });
+    if (!order) {
+      return NextResponse.json(
+        { ok: false, error: "Order not found" },
+        { status: 404 },
+      );
     }
 
-    const provider = await db.shippingProvider.upsert({
-      where: { merchantId_code: { merchantId: auth.merchantId, code: "imir" } },
-      create: { merchantId: auth.merchantId, name: "IMIR / EcoTrack", code: "imir", enabled: true },
-      update: { enabled: true },
-      select: { id: true },
-    });
+    if (order.shipment) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Order already has a shipment",
+          shipment: order.shipment,
+        },
+        { status: 409 },
+      );
+    }
 
-    // Reserve the unique orderId before calling the carrier. This closes the
-    // race where two requests could both create remote parcels concurrently.
+    const quote = getImirRate(wilayaId, method);
+
+    if (!quote) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "No IMIR rate available for this wilaya and method",
+        },
+        { status: 404 },
+      );
+    }
+
+    const product =
+      order.items
+        .map(
+          (item) =>
+            `${item.title} x${item.quantity}`,
+        )
+        .join(", ")
+        .slice(0, 255) ||
+      `Commande ${order.id}`;
+
+    const path =
+      process.env.IMIR_CREATE_PARCEL_PATH ||
+      "/api/v1/orders";
+
+    const providerBody = {
+      nom_client:
+        order.customer?.name ?? "Client Orderia",
+
+      telephone:
+        order.customer?.phone ?? "",
+
+      adresse:
+        order.customer?.address ?? "",
+
+      code_wilaya: wilayaId,
+
+      commune,
+
+      montant:
+        order.total + quote.fee,
+
+      produit: product,
+
+      remarque:
+        order.notes ?? "",
+
+      weight:
+        Number(body.weight ?? 1),
+
+      reference:
+        order.id,
+
+      stop_desk:
+        method === "stopdesk" ? 1 : 0,
+    };
+
+    const imirResponse =
+      await imirRequest<unknown>({
+        path,
+        method: "POST",
+        body: providerBody,
+      });
+
+    const trackingNo =
+      extractTrackingNo(imirResponse);
+
     let shipment;
+
     try {
       shipment = await db.shipment.create({
         data: {
           merchantId: auth.merchantId,
           orderId: order.id,
-          providerId: provider.id,
           method,
           wilayaId,
-          fee: 0,
-          status: "creating",
-        },
-      });
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-        const existing = await db.shipment.findUnique({ where: { orderId: order.id } });
-        return NextResponse.json({ ok: false, error: "Order already has a shipment", shipment: existing }, { status: 409 });
-      }
-      throw error;
-    }
-
-    try {
-      const providerBody = {
-        ...body,
-        merchantId: auth.merchantId,
-        orderId: order.id,
-        idempotencyKey: `orderia:${auth.merchantId}:${order.id}`,
-        method,
-        wilayaId,
-        customer: order.customer,
-        items: order.items,
-        total: order.total,
-        currency: order.currency,
-      };
-
-      const data = await imirRequest<Record<string, unknown>>({ path, method: "POST", body: providerBody });
-      const trackingNo = typeof data.trackingNo === "string" ? data.trackingNo : typeof data.tracking === "string" ? data.tracking : null;
-      const fee = Number(data.fee ?? data.shippingFee ?? body.fee ?? 0);
-
-      shipment = await db.shipment.update({
-        where: { id: shipment.id },
-        data: {
+          fee: quote.fee,
           trackingNo,
-          fee: Number.isSafeInteger(fee) && fee >= 0 ? fee : 0,
-          status: "created",
+          status: trackingNo
+            ? "shipped"
+            : "pending",
         },
       });
-
-      await db.order.update({ where: { id: order.id }, data: { status: "shipped" } });
-      return NextResponse.json({ ok: true, provider: "imir", data, shipment }, { status: 201 });
     } catch (error) {
-      await db.shipment.deleteMany({ where: { id: shipment.id, status: "creating" } });
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code ===
+          "P2002"
+      ) {
+        const existing =
+          await db.shipment.findUnique({
+            where: {
+              orderId: order.id,
+            },
+          });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Order already has a shipment",
+            shipment: existing,
+          },
+          { status: 409 },
+        );
+      }
+
       throw error;
     }
+
+    await db.order.update({
+      where: {
+        id: order.id,
+      },
+      data: {
+        status: trackingNo
+          ? "shipped"
+          : "processing",
+      },
+    });
+
+    return NextResponse.json(
+      {
+        ok: true,
+        provider: "imir",
+        shipment,
+        quote,
+        trackingNo,
+        imir: imirResponse,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "IMIR request failed" },
-      { status: 502 },
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to create shipment",
+      },
+      { status: 400 },
     );
   }
 }
