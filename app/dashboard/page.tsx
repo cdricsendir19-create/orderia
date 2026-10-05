@@ -17,7 +17,11 @@ export default async function DashboardPage() {
 
   return <main dir="rtl" style={{padding:24,fontFamily:"Arial"}}>
     <h1>لوحة تحكم التاجر</h1><p>بياناتك الحقيقية من قاعدة البيانات.</p>
-    <nav style={{display:"flex",gap:12,flexWrap:"wrap"}}><Link href="/dashboard/orders">الطلبات</Link><Link href="/dashboard/customers">العملاء</Link><Link href="/dashboard/shipping">مركز الشحن</Link></nav><form action="/api/auth/logout" method="post" style={{marginTop:16}}><button type="submit">تسجيل الخروج</button></form>
+    <nav aria-label="تنقل لوحة التحكم" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginTop:16}}>
+  <Link href="/dashboard/orders" style={{display:"block",padding:"14px 16px",border:"1px solid #ddd",borderRadius:12,background:"#111",color:"#fff",textDecoration:"none",textAlign:"center",fontWeight:700,minHeight:48,boxSizing:"border-box"}}>الطلبات</Link>
+  <Link href="/dashboard/customers" style={{display:"block",padding:"14px 16px",border:"1px solid #ddd",borderRadius:12,background:"#111",color:"#fff",textDecoration:"none",textAlign:"center",fontWeight:700,minHeight:48,boxSizing:"border-box"}}>العملاء</Link>
+  <Link href="/dashboard/shipping" style={{display:"block",padding:"14px 16px",border:"1px solid #ddd",borderRadius:12,background:"#111",color:"#fff",textDecoration:"none",textAlign:"center",fontWeight:700,minHeight:48,boxSizing:"border-box"}}>مركز الشحن</Link>
+</nav><form action="/api/auth/logout" method="post" style={{marginTop:16}}><button type="submit">تسجيل الخروج</button></form>
     <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginTop:24}}>
       <Card label="الطلبات اليوم" value={String(today)} /><Card label="قيد المعالجة" value={String(processing)} /><Card label="تم الشحن" value={String(shipped)} /><Card label="الإيرادات" value={`${(revenue._sum.total ?? 0).toLocaleString("ar-DZ")} دج`} />
     </section>
