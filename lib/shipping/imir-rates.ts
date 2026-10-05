@@ -9,6 +9,6 @@ export function getImirRate(wilayaId: number, method: ShippingMethod) {
   const rate = IMIR_RATES[wilayaId];
   if (!rate) return null;
   const fee = rate[method];
-  if (!fee) return null;
+  if (fee === undefined || fee === null) return null;
   return { wilayaId, method, fee, currency: "DZD" as const };
 }
