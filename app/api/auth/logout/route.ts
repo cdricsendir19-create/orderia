@@ -1,3 +1,20 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { dashboardCookieName } from "@/lib/dashboard-auth";
-export async function POST(){const response=NextResponse.redirect(new URL("/dashboard", process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000")); response.cookies.set({name:dashboardCookieName,value:"",httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"lax",path:"/",maxAge:0}); return response;}
+
+export async function POST(request: NextRequest) {
+  const response = NextResponse.redirect(
+    new URL("/dashboard", request.url)
+  );
+
+  response.cookies.set({
+    name: dashboardCookieName,
+    value: "",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
+
+  return response;
+}
