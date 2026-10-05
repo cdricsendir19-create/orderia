@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const databaseConfigured = Boolean(process.env.DATABASE_URL);
+  const databaseConfigured = Boolean(
+  process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL
+);
   const imirConfigured = Boolean(process.env.IMIR_API_BASE_URL && process.env.IMIR_API_TOKEN);
   const apiAuthConfigured = Boolean(process.env.ORDERIA_API_KEYS);
 
