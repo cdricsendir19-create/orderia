@@ -1,10 +1,11 @@
-"use server";
+
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getDashboardMerchantId } from "@/lib/dashboard-auth";
 
 async function createOrder(formData: FormData) {
+"use server";
   const merchantId = await getDashboardMerchantId();
 
   if (!merchantId) return;
