@@ -2,6 +2,12 @@ import { NextRequest } from "next/server";
 
 export type AuthContext = { merchantId: string };
 
+export function isAuthResponse(
+  value: AuthContext | Response
+): value is Response {
+  return value instanceof Response;
+}
+
 export function requireMerchant(request: NextRequest): AuthContext | Response {
   const supplied = request.headers.get("x-orderia-api-key")?.trim();
 
