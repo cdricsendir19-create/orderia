@@ -1,11 +1,55 @@
-
-
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getDashboardMerchantId } from "@/lib/dashboard-auth";
+import { getImirRate } from "@/lib/shipping/imir-rates";
+import { imirRequest } from "@/lib/shipping/imir-client";
+
+function extractTrackingNo(value: unknown): string | null {
+  const preferred = [
+    "trackingNo",
+    "tracking_no",
+    "tracking",
+    "tracking_number",
+    "trackingNumber",
+    "code",
+    "code_suivi",
+    "numero_suivi",
+    "parcel_code",
+    "order_code",
+    "id_colis",
+  ];
+
+  const visit = (node: unknown): string | null => {
+    if (!node || typeof node !== "object") return null;
+
+    const record = node as Record<string, unknown>;
+
+    for (const key of preferred) {
+      const candidate = record[key];
+
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+
+      if (typeof candidate === "number") {
+        return String(candidate);
+      }
+    }
+
+    for (const child of Object.values(record)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  return visit(value);
+}
 
 async function createOrder(formData: FormData) {
-"use server";
+  "use server";
+
   const merchantId = await getDashboardMerchantId();
 
   if (!merchantId) return;
@@ -74,6 +118,102 @@ async function createOrder(formData: FormData) {
   revalidatePath("/dashboard/customers");
 }
 
+async function createShipment(formData: FormData) {
+  "use server";
+
+  const merchantId = await getDashboardMerchantId();
+
+  if (!merchantId) return;
+
+  const orderId = String(formData.get("orderId") ?? "").trim();
+  const method =
+    formData.get("method") === "stopdesk" ? "stopdesk" : "home";
+  const commune = String(formData.get("commune") ?? "").trim();
+  const wilayaId = Number(formData.get("wilayaId") ?? "");
+
+  if (
+    !orderId ||
+    !commune ||
+    !Number.isInteger(wilayaId) ||
+    wilayaId < 1 ||
+    wilayaId > 58
+  ) {
+    return;
+  }
+
+  const order = await db.order.findFirst({
+    where: {
+      id: orderId,
+      merchantId,
+    },
+    include: {
+      customer: true,
+      shipment: true,
+      items: true,
+    },
+  });
+
+  if (!order || order.shipment) return;
+
+  const quote = getImirRate(wilayaId, method);
+
+  if (!quote) return;
+
+  const product =
+    order.items
+      .map((item) => `${item.title} x${item.quantity}`)
+      .join(", ")
+      .slice(0, 255) || `Commande ${order.id}`;
+
+  const imirPath =
+    process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/orders";
+
+  const imirResponse = await imirRequest<unknown>({
+    path: imirPath,
+    method: "POST",
+    body: {
+      nom_client: order.customer?.name ?? "Client Orderia",
+      telephone: order.customer?.phone ?? "",
+      adresse: order.customer?.address ?? "",
+      code_wilaya: wilayaId,
+      commune,
+      montant: order.total + quote.fee,
+      produit: product,
+      remarque: order.notes ?? "",
+      weight: 1,
+      reference: order.id,
+      stop_desk: method === "stopdesk" ? 1 : 0,
+    },
+  });
+
+  const trackingNo = extractTrackingNo(imirResponse);
+
+  await db.shipment.create({
+    data: {
+      merchantId,
+      orderId: order.id,
+      method,
+      wilayaId,
+      fee: quote.fee,
+      trackingNo,
+      status: trackingNo ? "shipped" : "pending",
+    },
+  });
+
+  await db.order.update({
+    where: {
+      id: order.id,
+    },
+    data: {
+      status: trackingNo ? "shipped" : "processing",
+    },
+  });
+
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/shipping");
+}
+
 export default async function OrdersPage() {
   const merchantId = await getDashboardMerchantId();
 
@@ -86,8 +226,12 @@ export default async function OrdersPage() {
   }
 
   const orders = await db.order.findMany({
-    where: { merchantId },
-    orderBy: { createdAt: "desc" },
+    where: {
+      merchantId,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
     take: 50,
     include: {
       customer: true,
@@ -249,10 +393,80 @@ export default async function OrdersPage() {
                   .join("، ")}
               </div>
 
-              <small>
-                {order.shipment?.trackingNo ??
-                  "لم تُنشأ شحنة"}
-              </small>
+              {order.shipment?.trackingNo ? (
+                <small>
+                  رقم التتبع: {order.shipment.trackingNo}
+                </small>
+              ) : order.shipment ? (
+                <small>
+                  تم إنشاء الشحنة وهي قيد المعالجة.
+                </small>
+              ) : (
+                <form
+                  action={createShipment}
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    marginTop: 12,
+                    paddingTop: 12,
+                    borderTop: "1px solid #eee",
+                  }}
+                >
+                  <input
+                    type="hidden"
+                    name="orderId"
+                    value={order.id}
+                  />
+
+                  <input
+                    name="wilayaId"
+                    required
+                    type="number"
+                    min="1"
+                    max="58"
+                    defaultValue={
+                      order.customer?.wilayaId ?? ""
+                    }
+                    placeholder="رقم الولاية"
+                    style={inputStyle}
+                  />
+
+                  <input
+                    name="commune"
+                    required
+                    placeholder="البلدية / Commune"
+                    style={inputStyle}
+                  />
+
+                  <select
+                    name="method"
+                    defaultValue="home"
+                    style={inputStyle}
+                  >
+                    <option value="home">
+                      التوصيل للمنزل
+                    </option>
+                    <option value="stopdesk">
+                      Stop Desk
+                    </option>
+                  </select>
+
+                  <button
+                    type="submit"
+                    style={{
+                      padding: "12px 16px",
+                      border: 0,
+                      borderRadius: 10,
+                      background: "#111",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    إنشاء الشحنة عبر IMIR
+                  </button>
+                </form>
+              )}
             </article>
           ))}
         </div>
