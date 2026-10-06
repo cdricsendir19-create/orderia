@@ -431,13 +431,29 @@ export default async function OrdersPage() {
                     placeholder="رقم الولاية"
                     style={inputStyle}
                   />
+<input
+  name="commune"
+  required
+  list={`communes-${order.id}`}
+  placeholder="اختر البلدية / Commune"
+  style={inputStyle}
+/>
 
-                  <input
-                    name="commune"
-                    required
-                    placeholder="البلدية / Commune"
-                    style={inputStyle}
-                  />
+<datalist id={`communes-${order.id}`}>
+  <option value="Alger Centre" />
+  <option value="Bab El Oued" />
+  <option value="Bir Mourad Raïs" />
+  <option value="Birkhadem" />
+  <option value="Bordj El Kiffan" />
+  <option value="Dar El Beïda" />
+  <option value="El Harrach" />
+  <option value="Hydra" />
+  <option value="Kouba" />
+  <option value="Mohammadia" />
+  <option value="Rouïba" />
+  <option value="Sidi M'Hamed" />
+  <option value="Zéralda" />
+</datalist>
 
                   <select
                     name="method"
