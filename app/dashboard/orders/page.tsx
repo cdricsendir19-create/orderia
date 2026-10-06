@@ -126,10 +126,19 @@ async function createShipment(formData: FormData) {
   if (!merchantId) return;
 
   const orderId = String(formData.get("orderId") ?? "").trim();
+
   const method =
-    formData.get("method") === "stopdesk" ? "stopdesk" : "home";
-  const commune = String(formData.get("commune") ?? "").trim();
-  const wilayaId = Number(formData.get("wilayaId") ?? "");
+    formData.get("method") === "stopdesk"
+      ? "stopdesk"
+      : "home";
+
+  const commune = String(
+    formData.get("commune") ?? ""
+  ).trim();
+
+  const wilayaId = Number(
+    formData.get("wilayaId") ?? ""
+  );
 
   if (
     !orderId ||
@@ -161,85 +170,128 @@ async function createShipment(formData: FormData) {
 
   const product =
     order.items
-      .map((item) => `${item.title} x${item.quantity}`)
+      .map(
+        (item) =>
+          `${item.title} x${item.quantity}`
+      )
       .join(", ")
-      .slice(0, 255) || `Commande ${order.id}`;
+      .slice(0, 255) ||
+    `Commande ${order.id}`;
 
   const imirPath =
-    process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/create/order";
+    process.env.IMIR_CREATE_PARCEL_PATH ||
+    "/api/v1/create/order";
 
-  const imirResponse = await imirRequest<unknown>({
-    path: imirPath,
-    method: "POST",
-    body: {
-      nom_client: order.customer?.name ?? "Client Orderia",
-      telephone: order.customer?.phone ?? "",
-      adresse: order.customer?.address ?? "",
-      code_wilaya: wilayaId,
-      commune,
-      montant: order.total + quote.fee,
-      produit: product,
-      remarque: order.notes ?? "",
-      weight: 1,
-      reference: order.id,
-      stop_desk: method === "stopdesk" ? 1 : 0,
-      type: 1,
-    },
-  });
+  try {
+    const imirResponse =
+      await imirRequest<unknown>({
+        path: imirPath,
+        method: "POST",
+        body: {
+          nom_client:
+            order.customer?.name ??
+            "Client Orderia",
 
-  const trackingNo = extractTrackingNo(imirResponse);
+          telephone:
+            order.customer?.phone ?? "",
 
-  await db.shipment.create({
-    data: {
-      merchantId,
-      orderId: order.id,
-      method,
-      wilayaId,
-      fee: quote.fee,
-      trackingNo,
-      status: trackingNo ? "shipped" : "pending",
-    },
-  });
+          adresse:
+            order.customer?.address ?? "",
 
-  await db.order.update({
-    where: {
-      id: order.id,
-    },
-    data: {
-      status: trackingNo ? "shipped" : "processing",
-    },
-  });
+          code_wilaya: wilayaId,
 
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/orders");
-  revalidatePath("/dashboard/shipping");
+          commune,
+
+          montant:
+            order.total + quote.fee,
+
+          produit: product,
+
+          remarque:
+            order.notes ?? "",
+
+          weight: 1,
+
+          reference: order.id,
+
+          stop_desk:
+            method === "stopdesk" ? 1 : 0,
+
+          type: 1,
+        },
+      });
+
+    const trackingNo =
+      extractTrackingNo(imirResponse);
+
+    await db.shipment.create({
+      data: {
+        merchantId,
+        orderId: order.id,
+        method,
+        wilayaId,
+        fee: quote.fee,
+        trackingNo,
+        status: trackingNo
+          ? "shipped"
+          : "pending",
+      },
+    });
+
+    await db.order.update({
+      where: {
+        id: order.id,
+      },
+      data: {
+        status: trackingNo
+          ? "shipped"
+          : "processing",
+      },
+    });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/orders");
+    revalidatePath("/dashboard/shipping");
+  } catch (error) {
+    console.error(
+      "Orderia IMIR shipment error:",
+      error
+    );
+
+    return;
+  }
 }
 
 export default async function OrdersPage() {
-  const merchantId = await getDashboardMerchantId();
+  const merchantId =
+    await getDashboardMerchantId();
 
   if (!merchantId) {
     return (
-      <main dir="rtl" style={{ padding: 24 }}>
+      <main
+        dir="rtl"
+        style={{ padding: 24 }}
+      >
         سجّل الدخول أولًا من لوحة التحكم.
       </main>
     );
   }
 
-  const orders = await db.order.findMany({
-    where: {
-      merchantId,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 50,
-    include: {
-      customer: true,
-      shipment: true,
-      items: true,
-    },
-  });
+  const orders =
+    await db.order.findMany({
+      where: {
+        merchantId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 50,
+      include: {
+        customer: true,
+        shipment: true,
+        items: true,
+      },
+    });
 
   return (
     <main
@@ -255,8 +307,14 @@ export default async function OrdersPage() {
         الطلبات
       </h1>
 
-      <p style={{ color: "#666", marginTop: 0 }}>
-        أنشئ طلب COD جديدًا ثم أرسله لاحقًا إلى مركز الشحن.
+      <p
+        style={{
+          color: "#666",
+          marginTop: 0,
+        }}
+      >
+        أنشئ طلب COD جديدًا ثم أرسله لاحقًا
+        إلى مركز الشحن.
       </p>
 
       <section
@@ -377,15 +435,21 @@ export default async function OrdersPage() {
               }}
             >
               <strong>
-                {order.customer?.name ?? "بدون عميل"}
+                {order.customer?.name ??
+                  "بدون عميل"}
               </strong>
 
               <div>
                 {order.status} —{" "}
-                {order.total.toLocaleString("ar-DZ")} دج
+                {order.total.toLocaleString(
+                  "ar-DZ"
+                )}{" "}
+                دج
               </div>
 
-              <div style={{ marginTop: 6 }}>
+              <div
+                style={{ marginTop: 6 }}
+              >
                 {order.items
                   .map(
                     (item) =>
@@ -396,11 +460,13 @@ export default async function OrdersPage() {
 
               {order.shipment?.trackingNo ? (
                 <small>
-                  رقم التتبع: {order.shipment.trackingNo}
+                  رقم التتبع:{" "}
+                  {order.shipment.trackingNo}
                 </small>
               ) : order.shipment ? (
                 <small>
-                  تم إنشاء الشحنة وهي قيد المعالجة.
+                  تم إنشاء الشحنة وهي قيد
+                  المعالجة.
                 </small>
               ) : (
                 <form
@@ -410,7 +476,8 @@ export default async function OrdersPage() {
                     gap: 8,
                     marginTop: 12,
                     paddingTop: 12,
-                    borderTop: "1px solid #eee",
+                    borderTop:
+                      "1px solid #eee",
                   }}
                 >
                   <input
@@ -426,34 +493,19 @@ export default async function OrdersPage() {
                     min="1"
                     max="58"
                     defaultValue={
-                      order.customer?.wilayaId ?? ""
+                      order.customer
+                        ?.wilayaId ?? ""
                     }
                     placeholder="رقم الولاية"
                     style={inputStyle}
                   />
-<input
-  name="commune"
-  required
-  list={`communes-${order.id}`}
-  placeholder="اختر البلدية / Commune"
-  style={inputStyle}
-/>
 
-<datalist id={`communes-${order.id}`}>
-  <option value="Alger Centre" />
-  <option value="Bab El Oued" />
-  <option value="Bir Mourad Raïs" />
-  <option value="Birkhadem" />
-  <option value="Bordj El Kiffan" />
-  <option value="Dar El Beïda" />
-  <option value="El Harrach" />
-  <option value="Hydra" />
-  <option value="Kouba" />
-  <option value="Mohammadia" />
-  <option value="Rouïba" />
-  <option value="Sidi M'Hamed" />
-  <option value="Zéralda" />
-</datalist>
+                  <input
+                    name="commune"
+                    required
+                    placeholder="البلدية / Commune"
+                    style={inputStyle}
+                  />
 
                   <select
                     name="method"
@@ -463,6 +515,7 @@ export default async function OrdersPage() {
                     <option value="home">
                       التوصيل للمنزل
                     </option>
+
                     <option value="stopdesk">
                       Stop Desk
                     </option>
