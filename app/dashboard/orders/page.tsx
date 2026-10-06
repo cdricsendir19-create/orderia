@@ -183,6 +183,7 @@ async function createShipment(formData: FormData) {
       weight: 1,
       reference: order.id,
       stop_desk: method === "stopdesk" ? 1 : 0,
+      type: 1,
     },
   });
 
