@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getDashboardMerchantId } from "@/lib/dashboard-auth";
 import { getImirRate } from "@/lib/shipping/imir-rates";
@@ -47,12 +48,22 @@ function extractTrackingNo(value: unknown): string | null {
   return visit(value);
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "حدث خطأ غير معروف.";
+}
+
 async function createOrder(formData: FormData) {
   "use server";
 
   const merchantId = await getDashboardMerchantId();
 
-  if (!merchantId) return;
+  if (!merchantId) {
+    redirect("/dashboard/orders?error=session");
+  }
 
   const name = String(formData.get("name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -63,16 +74,24 @@ async function createOrder(formData: FormData) {
   const quantity = Number(formData.get("quantity") ?? 1);
   const unitPrice = Number(formData.get("unitPrice") ?? 0);
 
-  if (
-    !name ||
-    !phone ||
-    !title ||
-    !Number.isFinite(quantity) ||
-    quantity < 1 ||
-    !Number.isFinite(unitPrice) ||
-    unitPrice < 0
-  ) {
-    return;
+  if (!name) {
+    redirect("/dashboard/orders?error=name");
+  }
+
+  if (!phone) {
+    redirect("/dashboard/orders?error=phone");
+  }
+
+  if (!title) {
+    redirect("/dashboard/orders?error=title");
+  }
+
+  if (!Number.isFinite(quantity) || quantity < 1) {
+    redirect("/dashboard/orders?error=quantity");
+  }
+
+  if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+    redirect("/dashboard/orders?error=price");
   }
 
   const wilayaId = wilayaRaw ? Number(wilayaRaw) : null;
@@ -83,39 +102,56 @@ async function createOrder(formData: FormData) {
       wilayaId < 1 ||
       wilayaId > 58)
   ) {
-    return;
+    redirect("/dashboard/orders?error=wilaya");
   }
 
-  const customer = await db.customer.create({
-    data: {
-      merchantId,
-      name,
-      phone,
-      wilayaId,
-      address: address || null,
-    },
-  });
+  try {
+    const customer = await db.customer.create({
+      data: {
+        merchantId,
+        name,
+        phone,
+        wilayaId,
+        address: address || null,
+      },
+    });
 
-  await db.order.create({
-    data: {
-      merchantId,
-      customerId: customer.id,
-      status: "pending",
-      total: Math.round(quantity * unitPrice),
-      currency: "DZD",
-      items: {
-        create: {
-          title,
-          quantity: Math.round(quantity),
-          unitPrice: Math.round(unitPrice),
+    const order = await db.order.create({
+      data: {
+        merchantId,
+        customerId: customer.id,
+        status: "pending",
+        total: Math.round(quantity * unitPrice),
+        currency: "DZD",
+        items: {
+          create: {
+            title,
+            quantity: Math.round(quantity),
+            unitPrice: Math.round(unitPrice),
+          },
         },
       },
-    },
-  });
+      select: {
+        id: true,
+      },
+    });
 
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/orders");
-  revalidatePath("/dashboard/customers");
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/orders");
+    revalidatePath("/dashboard/customers");
+
+    redirect(
+      `/dashboard/orders?success=created&order=${encodeURIComponent(order.id)}`,
+    );
+  } catch (error) {
+    console.error("Orderia create order error:", error);
+
+    redirect(
+      `/dashboard/orders?error=${encodeURIComponent(
+        errorMessage(error),
+      )}`,
+    );
+  }
 }
 
 async function createShipment(formData: FormData) {
@@ -123,7 +159,9 @@ async function createShipment(formData: FormData) {
 
   const merchantId = await getDashboardMerchantId();
 
-  if (!merchantId) return;
+  if (!merchantId) {
+    redirect("/dashboard/orders?error=session");
+  }
 
   const orderId = String(formData.get("orderId") ?? "").trim();
   const method =
@@ -131,14 +169,20 @@ async function createShipment(formData: FormData) {
   const commune = String(formData.get("commune") ?? "").trim();
   const wilayaId = Number(formData.get("wilayaId") ?? "");
 
+  if (!orderId) {
+    redirect("/dashboard/orders?error=shipment-order");
+  }
+
+  if (!commune) {
+    redirect("/dashboard/orders?error=commune");
+  }
+
   if (
-    !orderId ||
-    !commune ||
     !Number.isInteger(wilayaId) ||
     wilayaId < 1 ||
     wilayaId > 58
   ) {
-    return;
+    redirect("/dashboard/orders?error=shipment-wilaya");
   }
 
   const order = await db.order.findFirst({
@@ -153,11 +197,19 @@ async function createShipment(formData: FormData) {
     },
   });
 
-  if (!order || order.shipment) return;
+  if (!order) {
+    redirect("/dashboard/orders?error=order-not-found");
+  }
+
+  if (order.shipment) {
+    redirect("/dashboard/orders?error=shipment-exists");
+  }
 
   const quote = getImirRate(wilayaId, method);
 
-  if (!quote) return;
+  if (!quote) {
+    redirect("/dashboard/orders?error=rate");
+  }
 
   const product =
     order.items
@@ -166,7 +218,8 @@ async function createShipment(formData: FormData) {
       .slice(0, 255) || `Commande ${order.id}`;
 
   const imirPath =
-    process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/create/order";
+    process.env.IMIR_CREATE_PARCEL_PATH ||
+    "/api/v1/create/order";
 
   try {
     const imirResponse = await imirRequest<unknown>({
@@ -210,26 +263,80 @@ async function createShipment(formData: FormData) {
         status: trackingNo ? "shipped" : "processing",
       },
     });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/orders");
+    revalidatePath("/dashboard/shipping");
+
+    redirect(
+      `/dashboard/orders?success=shipment&order=${encodeURIComponent(
+        order.id,
+      )}`,
+    );
   } catch (error) {
     console.error("Orderia IMIR shipment error:", error);
-    return;
-  }
 
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/orders");
-  revalidatePath("/dashboard/shipping");
+    redirect(
+      `/dashboard/orders?error=${encodeURIComponent(
+        errorMessage(error),
+      )}`,
+    );
+  }
 }
 
-export default async function OrdersPage() {
+function getErrorMessage(error: string | undefined): string | null {
+  if (!error) return null;
+
+  const messages: Record<string, string> = {
+    session: "انتهت جلسة الدخول. سجّل الدخول من جديد.",
+    name: "اسم العميل مطلوب.",
+    phone: "رقم الهاتف مطلوب.",
+    title: "اسم المنتج مطلوب.",
+    quantity: "الكمية غير صحيحة.",
+    price: "سعر الوحدة غير صحيح.",
+    wilaya: "رقم الولاية يجب أن يكون بين 1 و58.",
+    "shipment-order": "لم يتم تحديد الطلب.",
+    commune: "البلدية مطلوبة.",
+    "shipment-wilaya": "رقم الولاية غير صحيح.",
+    "order-not-found": "الطلب غير موجود.",
+    "shipment-exists": "تم إنشاء شحنة لهذا الطلب مسبقًا.",
+    rate: "تعذر العثور على سعر الشحن لهذه الولاية.",
+  };
+
+  return messages[error] ?? error;
+}
+
+export default async function OrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    success?: string;
+    error?: string;
+  }>;
+}) {
   const merchantId = await getDashboardMerchantId();
 
   if (!merchantId) {
     return (
       <main dir="rtl" style={{ padding: 24 }}>
-        سجّل الدخول أولًا من لوحة التحكم.
+        <h1>الطلبات</h1>
+
+        <div
+          style={{
+            padding: 16,
+            border: "1px solid #f0b4b4",
+            borderRadius: 12,
+            background: "#fff5f5",
+            color: "#a00",
+          }}
+        >
+          سجّل الدخول أولًا من لوحة التحكم.
+        </div>
       </main>
     );
   }
+
+  const params = await searchParams;
 
   const orders = await db.order.findMany({
     where: {
@@ -245,6 +352,8 @@ export default async function OrdersPage() {
       items: true,
     },
   });
+
+  const error = getErrorMessage(params.error);
 
   return (
     <main
@@ -263,6 +372,55 @@ export default async function OrdersPage() {
       <p style={{ color: "#666", marginTop: 0 }}>
         أنشئ طلب COD جديدًا ثم أرسله لاحقًا إلى مركز الشحن.
       </p>
+
+      {params.success === "created" && (
+        <div
+          style={{
+            margin: "16px 0",
+            padding: 14,
+            border: "1px solid #b7dfc0",
+            borderRadius: 12,
+            background: "#f1fff4",
+            color: "#176b2c",
+            fontWeight: 700,
+          }}
+        >
+          تم إنشاء الطلب بنجاح.
+        </div>
+      )}
+
+      {params.success === "shipment" && (
+        <div
+          style={{
+            margin: "16px 0",
+            padding: 14,
+            border: "1px solid #b7dfc0",
+            borderRadius: 12,
+            background: "#f1fff4",
+            color: "#176b2c",
+            fontWeight: 700,
+          }}
+        >
+          تم إنشاء الشحنة بنجاح.
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            margin: "16px 0",
+            padding: 14,
+            border: "1px solid #e5a5a5",
+            borderRadius: 12,
+            background: "#fff4f4",
+            color: "#a00000",
+            fontWeight: 700,
+            overflowWrap: "anywhere",
+          }}
+        >
+          خطأ: {error}
+        </div>
+      )}
 
       <section
         style={{
@@ -394,7 +552,7 @@ export default async function OrdersPage() {
                 {order.items
                   .map(
                     (item) =>
-                      `${item.title} ×${item.quantity}`
+                      `${item.title} ×${item.quantity}`,
                   )
                   .join("، ")}
               </div>
