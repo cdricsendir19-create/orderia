@@ -360,7 +360,16 @@ async function createShipment(formData: FormData) {
         order.id,
       )}`,
     );
-  } catch (error) {
+  } catch (error) {  
+  if (
+      error &&
+      typeof error === "object" &&
+      "digest" in error &&
+      typeof (error as { digest?: unknown }).digest === "string" &&
+      (error as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+    ) {
+      throw error;
+    }
     console.error(
       "Orderia IMIR shipment error:",
       error,
