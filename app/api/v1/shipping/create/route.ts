@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getImirRate } from "@/lib/shipping/imir-rates";
 import { imirRequest } from "../../../../../lib/shipping/imir-client";
+import { getShippingProvider } from "../../../../../lib/shipping/providers";
 import { isAuthResponse, requireMerchant } from "@/lib/api-auth";
 
 function extractTrackingNo(value: unknown): string | null {
@@ -56,8 +57,11 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     const orderId = String(body.orderId ?? "").trim();
+    const providerCode = String(body.provider ?? "imir").trim();
+
     const method =
       body.method === "stopdesk" ? "stopdesk" : "home";
+
     const wilayaId = Number(body.wilayaId);
 
     if (!orderId) {
@@ -120,19 +124,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const quote = getImirRate(wilayaId, method);
-
-    if (!quote) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "No IMIR rate available for this wilaya and method",
-        },
-        { status: 404 },
-      );
-    }
-
     const product =
       order.items
         .map(
@@ -143,51 +134,129 @@ export async function POST(request: NextRequest) {
         .slice(0, 255) ||
       `Commande ${order.id}`;
 
-    const path =
-      process.env.IMIR_CREATE_PARCEL_PATH ||
-      "/api/v1/orders";
+    let fee: number;
+    let trackingNo: string | null = null;
+    let providerResponse: unknown = null;
 
-    const providerBody = {
-      nom_client:
-        order.customer?.name ?? "Client Orderia",
+    if (providerCode === "imir") {
+      const quote = getImirRate(wilayaId, method);
 
-      telephone:
-        order.customer?.phone ?? "",
+      if (!quote) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "No IMIR rate available for this wilaya and method",
+          },
+          { status: 404 },
+        );
+      }
 
-      adresse:
-        order.customer?.address ?? "",
+      fee = quote.fee;
 
-      code_wilaya: wilayaId,
+      const path =
+        process.env.IMIR_CREATE_PARCEL_PATH ||
+        "/api/v1/orders";
 
-      commune,
+      const providerBody = {
+        nom_client:
+          order.customer?.name ?? "Client Orderia",
 
-      montant:
-        order.total + quote.fee,
+        telephone:
+          order.customer?.phone ?? "",
 
-      produit: product,
+        adresse:
+          order.customer?.address ?? "",
 
-      remarque:
-        order.notes ?? "",
+        code_wilaya: wilayaId,
 
-      weight:
-        Number(body.weight ?? 1),
+        commune,
 
-      reference:
-        order.id,
+        montant:
+          order.total + quote.fee,
 
-      stop_desk:
-        method === "stopdesk" ? 1 : 0,
-    };
+        produit: product,
 
-    const imirResponse =
-      await imirRequest<unknown>({
-        path,
-        method: "POST",
-        body: providerBody,
+        remarque:
+          order.notes ?? "",
+
+        weight:
+          Number(body.weight ?? 1),
+
+        reference:
+          order.id,
+
+        stop_desk:
+          method === "stopdesk" ? 1 : 0,
+      };
+
+      providerResponse =
+        await imirRequest<unknown>({
+          path,
+          method: "POST",
+          body: providerBody,
+        });
+
+      trackingNo =
+        extractTrackingNo(providerResponse);
+    } else {
+      const provider =
+        getShippingProvider(providerCode);
+
+      if (!provider) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `Shipping provider "${providerCode}" is not configured`,
+          },
+          { status: 404 },
+        );
+      }
+
+      const quote = await provider.quote({
+        wilayaId,
+        method,
+        weight: Number(body.weight ?? 1),
       });
 
-    const trackingNo =
-      extractTrackingNo(imirResponse);
+      if (!quote.available) {
+        return NextResponse.json(
+          {
+            ok: false,
+            provider: provider.code,
+            error:
+              quote.reason ??
+              "Shipping method is unavailable",
+            quote,
+          },
+          { status: 404 },
+        );
+      }
+
+      fee = quote.fee;
+
+      const created =
+        await provider.createShipment({
+          orderId: order.id,
+          customerName:
+            order.customer?.name ??
+            "Client Orderia",
+          phone:
+            order.customer?.phone ?? "",
+          address:
+            order.customer?.address ?? "",
+          wilayaId,
+          commune,
+          method,
+          amount: order.total + fee,
+          product,
+          notes: order.notes ?? "",
+          weight: Number(body.weight ?? 1),
+        });
+
+      trackingNo = created.trackingNo;
+      providerResponse = created.raw;
+    }
 
     let shipment;
 
@@ -198,7 +267,7 @@ export async function POST(request: NextRequest) {
           orderId: order.id,
           method,
           wilayaId,
-          fee: quote.fee,
+          fee,
           trackingNo,
           status: trackingNo
             ? "shipped"
@@ -248,11 +317,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: true,
-        provider: "imir",
+        provider: providerCode,
         shipment,
-        quote,
+        quote: {
+          wilayaId,
+          method,
+          fee,
+          currency: "DZD",
+        },
         trackingNo,
-        imir: imirResponse,
+        providerResponse,
       },
       { status: 201 },
     );
