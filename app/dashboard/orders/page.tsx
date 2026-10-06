@@ -5,6 +5,29 @@ import { getDashboardMerchantId } from "@/lib/dashboard-auth";
 import { getImirRate } from "@/lib/shipping/imir-rates";
 import { imirRequest } from "@/lib/shipping/imir-client";
 
+type Commune = {
+  wilayaCode: number;
+  name: string;
+  nameAr?: string;
+};
+
+const COMMUNES_URL =
+  "https://raw.githubusercontent.com/DZBuild-com/dzship/main/data/communes.json";
+
+async function loadCommunes(): Promise<Commune[]> {
+  const response = await fetch(COMMUNES_URL, {
+    next: { revalidate: 86400 },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `تعذر تحميل قائمة البلديات: HTTP ${response.status}`,
+    );
+  }
+
+  return (await response.json()) as Commune[];
+}
+
 function extractTrackingNo(value: unknown): string | null {
   const preferred = [
     "trackingNo",
@@ -49,10 +72,7 @@ function extractTrackingNo(value: unknown): string | null {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
+  if (error instanceof Error) return error.message;
   return "حدث خطأ غير معروف.";
 }
 
@@ -74,17 +94,9 @@ async function createOrder(formData: FormData) {
   const quantity = Number(formData.get("quantity") ?? 1);
   const unitPrice = Number(formData.get("unitPrice") ?? 0);
 
-  if (!name) {
-    redirect("/dashboard/orders?error=name");
-  }
-
-  if (!phone) {
-    redirect("/dashboard/orders?error=phone");
-  }
-
-  if (!title) {
-    redirect("/dashboard/orders?error=title");
-  }
+  if (!name) redirect("/dashboard/orders?error=name");
+  if (!phone) redirect("/dashboard/orders?error=phone");
+  if (!title) redirect("/dashboard/orders?error=title");
 
   if (!Number.isFinite(quantity) || quantity < 1) {
     redirect("/dashboard/orders?error=quantity");
@@ -141,7 +153,9 @@ async function createOrder(formData: FormData) {
     revalidatePath("/dashboard/customers");
 
     redirect(
-      `/dashboard/orders?success=created&order=${encodeURIComponent(order.id)}`,
+      `/dashboard/orders?success=created&order=${encodeURIComponent(
+        order.id,
+      )}`,
     );
   } catch (error) {
     console.error("Orderia create order error:", error);
@@ -164,10 +178,19 @@ async function createShipment(formData: FormData) {
   }
 
   const orderId = String(formData.get("orderId") ?? "").trim();
+
   const method =
-    formData.get("method") === "stopdesk" ? "stopdesk" : "home";
-  const commune = String(formData.get("commune") ?? "").trim();
-  const wilayaId = Number(formData.get("wilayaId") ?? "");
+    formData.get("method") === "stopdesk"
+      ? "stopdesk"
+      : "home";
+
+  const commune = String(
+    formData.get("commune") ?? "",
+  ).trim();
+
+  const wilayaId = Number(
+    formData.get("wilayaId") ?? "",
+  );
 
   if (!orderId) {
     redirect("/dashboard/orders?error=shipment-order");
@@ -205,6 +228,40 @@ async function createShipment(formData: FormData) {
     redirect("/dashboard/orders?error=shipment-exists");
   }
 
+  if (order.customer?.wilayaId !== wilayaId) {
+    redirect("/dashboard/orders?error=wilaya-mismatch");
+  }
+
+  let communes: Commune[];
+
+  try {
+    communes = await loadCommunes();
+  } catch (error) {
+    console.error(
+      "Orderia commune loading error:",
+      error,
+    );
+
+    redirect(
+      `/dashboard/orders?error=${encodeURIComponent(
+        errorMessage(error),
+      )}`,
+    );
+  }
+
+  const selectedCommune = communes.find(
+    (item) =>
+      item.wilayaCode === wilayaId &&
+      item.name.trim().toLowerCase() ===
+        commune.trim().toLowerCase(),
+  );
+
+  if (!selectedCommune) {
+    redirect(
+      "/dashboard/orders?error=commune-invalid",
+    );
+  }
+
   const quote = getImirRate(wilayaId, method);
 
   if (!quote) {
@@ -213,9 +270,13 @@ async function createShipment(formData: FormData) {
 
   const product =
     order.items
-      .map((item) => `${item.title} x${item.quantity}`)
+      .map(
+        (item) =>
+          `${item.title} x${item.quantity}`,
+      )
       .join(", ")
-      .slice(0, 255) || `Commande ${order.id}`;
+      .slice(0, 255) ||
+    `Commande ${order.id}`;
 
   const imirPath =
     process.env.IMIR_CREATE_PARCEL_PATH ||
@@ -226,22 +287,44 @@ async function createShipment(formData: FormData) {
       path: imirPath,
       method: "POST",
       body: {
-        nom_client: order.customer?.name ?? "Client Orderia",
-        telephone: order.customer?.phone ?? "",
-        adresse: order.customer?.address ?? "",
+        nom_client:
+          order.customer?.name ??
+          "Client Orderia",
+
+        telephone:
+          order.customer?.phone ?? "",
+
+        adresse:
+          order.customer?.address ?? "",
+
         code_wilaya: String(wilayaId),
-        commune,
-        montant: String(order.total + quote.fee),
+
+        commune: selectedCommune.name,
+
+        montant: String(
+          order.total + quote.fee,
+        ),
+
         produit: product,
-        remarque: order.notes ?? "",
+
+        remarque:
+          order.notes ?? "",
+
         weight: "1",
+
         reference: order.id,
-        stop_desk: method === "stopdesk" ? "1" : "0",
+
+        stop_desk:
+          method === "stopdesk"
+            ? "1"
+            : "0",
+
         type: "1",
       },
     });
 
-    const trackingNo = extractTrackingNo(imirResponse);
+    const trackingNo =
+      extractTrackingNo(imirResponse);
 
     await db.shipment.create({
       data: {
@@ -251,7 +334,9 @@ async function createShipment(formData: FormData) {
         wilayaId,
         fee: quote.fee,
         trackingNo,
-        status: trackingNo ? "shipped" : "pending",
+        status: trackingNo
+          ? "shipped"
+          : "pending",
       },
     });
 
@@ -260,7 +345,9 @@ async function createShipment(formData: FormData) {
         id: order.id,
       },
       data: {
-        status: trackingNo ? "shipped" : "processing",
+        status: trackingNo
+          ? "shipped"
+          : "processing",
       },
     });
 
@@ -274,7 +361,10 @@ async function createShipment(formData: FormData) {
       )}`,
     );
   } catch (error) {
-    console.error("Orderia IMIR shipment error:", error);
+    console.error(
+      "Orderia IMIR shipment error:",
+      error,
+    );
 
     redirect(
       `/dashboard/orders?error=${encodeURIComponent(
@@ -284,23 +374,53 @@ async function createShipment(formData: FormData) {
   }
 }
 
-function getErrorMessage(error: string | undefined): string | null {
+function getErrorMessage(
+  error: string | undefined,
+): string | null {
   if (!error) return null;
 
   const messages: Record<string, string> = {
-    session: "انتهت جلسة الدخول. سجّل الدخول من جديد.",
-    name: "اسم العميل مطلوب.",
-    phone: "رقم الهاتف مطلوب.",
-    title: "اسم المنتج مطلوب.",
-    quantity: "الكمية غير صحيحة.",
-    price: "سعر الوحدة غير صحيح.",
-    wilaya: "رقم الولاية يجب أن يكون بين 1 و58.",
-    "shipment-order": "لم يتم تحديد الطلب.",
-    commune: "البلدية مطلوبة.",
-    "shipment-wilaya": "رقم الولاية غير صحيح.",
-    "order-not-found": "الطلب غير موجود.",
-    "shipment-exists": "تم إنشاء شحنة لهذا الطلب مسبقًا.",
-    rate: "تعذر العثور على سعر الشحن لهذه الولاية.",
+    session:
+      "انتهت جلسة الدخول. سجّل الدخول من جديد.",
+
+    name:
+      "اسم العميل مطلوب.",
+
+    phone:
+      "رقم الهاتف مطلوب.",
+
+    title:
+      "اسم المنتج مطلوب.",
+
+    quantity:
+      "الكمية غير صحيحة.",
+
+    price:
+      "سعر الوحدة غير صحيح.",
+
+    wilaya:
+      "رقم الولاية يجب أن يكون بين 1 و58.",
+
+    commune:
+      "البلدية مطلوبة.",
+
+    "commune-invalid":
+      "البلدية المختارة غير موجودة ضمن الولاية أو ليست بالصيغة التي يقبلها EcoTrack.",
+
+    "shipment-wilaya":
+      "رقم الولاية غير صحيح.",
+
+    "wilaya-mismatch":
+      "ولاية الشحنة لا تطابق ولاية العميل.",
+
+    "order-not-found":
+      "الطلب غير موجود.",
+
+    "shipment-exists":
+      "تم إنشاء شحنة لهذا الطلب مسبقًا.",
+
+    rate:
+      "تعذر العثور على سعر الشحن لهذه الولاية.",
   };
 
   return messages[error] ?? error;
@@ -314,22 +434,18 @@ export default async function OrdersPage({
     error?: string;
   }>;
 }) {
-  const merchantId = await getDashboardMerchantId();
+  const merchantId =
+    await getDashboardMerchantId();
 
   if (!merchantId) {
     return (
-      <main dir="rtl" style={{ padding: 24 }}>
+      <main
+        dir="rtl"
+        style={{ padding: 24 }}
+      >
         <h1>الطلبات</h1>
 
-        <div
-          style={{
-            padding: 16,
-            border: "1px solid #f0b4b4",
-            borderRadius: 12,
-            background: "#fff5f5",
-            color: "#a00",
-          }}
-        >
+        <div style={errorStyle}>
           سجّل الدخول أولًا من لوحة التحكم.
         </div>
       </main>
@@ -338,22 +454,38 @@ export default async function OrdersPage({
 
   const params = await searchParams;
 
-  const orders = await db.order.findMany({
-    where: {
-      merchantId,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 50,
-    include: {
-      customer: true,
-      shipment: true,
-      items: true,
-    },
-  });
+  const orders =
+    await db.order.findMany({
+      where: {
+        merchantId,
+      },
 
-  const error = getErrorMessage(params.error);
+      orderBy: {
+        createdAt: "desc",
+      },
+
+      take: 50,
+
+      include: {
+        customer: true,
+        shipment: true,
+        items: true,
+      },
+    });
+
+  let communes: Commune[] = [];
+
+  try {
+    communes = await loadCommunes();
+  } catch (error) {
+    console.error(
+      "Orderia communes loading error:",
+      error,
+    );
+  }
+
+  const error =
+    getErrorMessage(params.error);
 
   return (
     <main
@@ -369,78 +501,42 @@ export default async function OrdersPage({
         الطلبات
       </h1>
 
-      <p style={{ color: "#666", marginTop: 0 }}>
-        أنشئ طلب COD جديدًا ثم أرسله لاحقًا إلى مركز الشحن.
+      <p
+        style={{
+          color: "#666",
+          marginTop: 0,
+        }}
+      >
+        أنشئ طلب COD جديدًا ثم أرسله
+        لاحقًا إلى مركز الشحن.
       </p>
 
       {params.success === "created" && (
-        <div
-          style={{
-            margin: "16px 0",
-            padding: 14,
-            border: "1px solid #b7dfc0",
-            borderRadius: 12,
-            background: "#f1fff4",
-            color: "#176b2c",
-            fontWeight: 700,
-          }}
-        >
+        <div style={successStyle}>
           تم إنشاء الطلب بنجاح.
         </div>
       )}
 
       {params.success === "shipment" && (
-        <div
-          style={{
-            margin: "16px 0",
-            padding: 14,
-            border: "1px solid #b7dfc0",
-            borderRadius: 12,
-            background: "#f1fff4",
-            color: "#176b2c",
-            fontWeight: 700,
-          }}
-        >
+        <div style={successStyle}>
           تم إنشاء الشحنة بنجاح.
         </div>
       )}
 
       {error && (
-        <div
-          style={{
-            margin: "16px 0",
-            padding: 14,
-            border: "1px solid #e5a5a5",
-            borderRadius: 12,
-            background: "#fff4f4",
-            color: "#a00000",
-            fontWeight: 700,
-            overflowWrap: "anywhere",
-          }}
-        >
+        <div style={errorStyle}>
           خطأ: {error}
         </div>
       )}
 
-      <section
-        style={{
-          padding: 18,
-          border: "1px solid #ddd",
-          borderRadius: 14,
-          margin: "20px 0",
-          background: "#fafafa",
-        }}
-      >
+      <section style={sectionStyle}>
         <h2 style={{ marginTop: 0 }}>
           إضافة طلب جديد
         </h2>
 
         <form
           action={createOrder}
-          style={{
-            display: "grid",
-            gap: 10,
-          }}
+          style={formStyle}
         >
           <input
             name="name"
@@ -498,15 +594,7 @@ export default async function OrdersPage({
 
           <button
             type="submit"
-            style={{
-              padding: "12px 16px",
-              border: 0,
-              borderRadius: 10,
-              background: "#111",
-              color: "#fff",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
+            style={buttonStyle}
           >
             إنشاء الطلب
           </button>
@@ -514,13 +602,7 @@ export default async function OrdersPage({
       </section>
 
       {orders.length === 0 ? (
-        <div
-          style={{
-            padding: 18,
-            border: "1px solid #ddd",
-            borderRadius: 12,
-          }}
-        >
+        <div style={emptyStyle}>
           لا توجد طلبات بعد.
         </div>
       ) : (
@@ -530,110 +612,164 @@ export default async function OrdersPage({
             gap: 10,
           }}
         >
-          {orders.map((order) => (
-            <article
-              key={order.id}
-              style={{
-                padding: 16,
-                border: "1px solid #ddd",
-                borderRadius: 12,
-              }}
-            >
-              <strong>
-                {order.customer?.name ?? "بدون عميل"}
-              </strong>
+          {orders.map((order) => {
+            const wilayaId =
+              order.customer?.wilayaId ??
+              null;
 
-              <div>
-                {order.status} —{" "}
-                {order.total.toLocaleString("ar-DZ")} دج
-              </div>
+            const orderCommunes =
+              communes
+                .filter(
+                  (item) =>
+                    item.wilayaCode ===
+                    wilayaId,
+                )
+                .sort((a, b) =>
+                  a.name.localeCompare(
+                    b.name,
+                  ),
+                );
 
-              <div style={{ marginTop: 6 }}>
-                {order.items
-                  .map(
-                    (item) =>
-                      `${item.title} ×${item.quantity}`,
-                  )
-                  .join("، ")}
-              </div>
+            return (
+              <article
+                key={order.id}
+                style={cardStyle}
+              >
+                <strong>
+                  {order.customer?.name ??
+                    "بدون عميل"}
+                </strong>
 
-              {order.shipment?.trackingNo ? (
-                <small>
-                  رقم التتبع: {order.shipment.trackingNo}
-                </small>
-              ) : order.shipment ? (
-                <small>
-                  تم إنشاء الشحنة وهي قيد المعالجة.
-                </small>
-              ) : (
-                <form
-                  action={createShipment}
+                <div>
+                  {order.status} —{" "}
+                  {order.total.toLocaleString(
+                    "ar-DZ",
+                  )}{" "}
+                  دج
+                </div>
+
+                <div
                   style={{
-                    display: "grid",
-                    gap: 8,
-                    marginTop: 12,
-                    paddingTop: 12,
-                    borderTop: "1px solid #eee",
+                    marginTop: 6,
                   }}
                 >
-                  <input
-                    type="hidden"
-                    name="orderId"
-                    value={order.id}
-                  />
+                  {order.items
+                    .map(
+                      (item) =>
+                        `${item.title} ×${item.quantity}`,
+                    )
+                    .join("، ")}
+                </div>
 
-                  <input
-                    name="wilayaId"
-                    required
-                    type="number"
-                    min="1"
-                    max="58"
-                    defaultValue={
-                      order.customer?.wilayaId ?? ""
+                {order.shipment
+                  ?.trackingNo ? (
+                  <small>
+                    رقم التتبع:{" "}
+                    {
+                      order.shipment
+                        .trackingNo
                     }
-                    placeholder="رقم الولاية"
-                    style={inputStyle}
-                  />
-
-                  <input
-                    name="commune"
-                    required
-                    placeholder="البلدية / Commune"
-                    style={inputStyle}
-                  />
-
-                  <select
-                    name="method"
-                    defaultValue="home"
-                    style={inputStyle}
-                  >
-                    <option value="home">
-                      التوصيل للمنزل
-                    </option>
-
-                    <option value="stopdesk">
-                      Stop Desk
-                    </option>
-                  </select>
-
-                  <button
-                    type="submit"
+                  </small>
+                ) : order.shipment ? (
+                  <small>
+                    تم إنشاء الشحنة
+                    وهي قيد المعالجة.
+                  </small>
+                ) : wilayaId &&
+                  orderCommunes.length >
+                    0 ? (
+                  <form
+                    action={
+                      createShipment
+                    }
                     style={{
-                      padding: "12px 16px",
-                      border: 0,
-                      borderRadius: 10,
-                      background: "#111",
-                      color: "#fff",
-                      fontWeight: 700,
-                      cursor: "pointer",
+                      ...formStyle,
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop:
+                        "1px solid #eee",
                     }}
                   >
-                    إنشاء الشحنة عبر IMIR
-                  </button>
-                </form>
-              )}
-            </article>
-          ))}
+                    <input
+                      type="hidden"
+                      name="orderId"
+                      value={order.id}
+                    />
+
+                    <input
+                      type="hidden"
+                      name="wilayaId"
+                      value={wilayaId}
+                    />
+
+                    <select
+                      name="commune"
+                      required
+                      defaultValue=""
+                      style={inputStyle}
+                    >
+                      <option
+                        value=""
+                        disabled
+                      >
+                        اختر البلدية
+                      </option>
+
+                      {orderCommunes.map(
+                        (commune) => (
+                          <option
+                            key={`${commune.wilayaCode}-${commune.name}`}
+                            value={
+                              commune.name
+                            }
+                          >
+                            {commune.nameAr
+                              ? `${commune.name} — ${commune.nameAr}`
+                              : commune.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+
+                    <select
+                      name="method"
+                      defaultValue="home"
+                      style={inputStyle}
+                    >
+                      <option value="home">
+                        التوصيل للمنزل
+                      </option>
+
+                      <option value="stopdesk">
+                        Stop Desk
+                      </option>
+                    </select>
+
+                    <button
+                      type="submit"
+                      style={buttonStyle}
+                    >
+                      إنشاء الشحنة عبر IMIR
+                    </button>
+                  </form>
+                ) : (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: 12,
+                      borderRadius: 10,
+                      background:
+                        "#fff8e1",
+                      color: "#795500",
+                    }}
+                  >
+                    لا توجد بلديات متاحة
+                    لهذه الولاية.
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
     </main>
@@ -647,4 +783,60 @@ const inputStyle = {
   border: "1px solid #ccc",
   borderRadius: 10,
   background: "#fff",
+};
+
+const formStyle = {
+  display: "grid",
+  gap: 10,
+};
+
+const buttonStyle = {
+  padding: "12px 16px",
+  border: 0,
+  borderRadius: 10,
+  background: "#111",
+  color: "#fff",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const sectionStyle = {
+  padding: 18,
+  border: "1px solid #ddd",
+  borderRadius: 14,
+  margin: "20px 0",
+  background: "#fafafa",
+};
+
+const cardStyle = {
+  padding: 16,
+  border: "1px solid #ddd",
+  borderRadius: 12,
+};
+
+const emptyStyle = {
+  padding: 18,
+  border: "1px solid #ddd",
+  borderRadius: 12,
+};
+
+const successStyle = {
+  margin: "16px 0",
+  padding: 14,
+  border: "1px solid #b7dfc0",
+  borderRadius: 12,
+  background: "#f1fff4",
+  color: "#176b2c",
+  fontWeight: 700,
+};
+
+const errorStyle = {
+  margin: "16px 0",
+  padding: 14,
+  border: "1px solid #e5a5a5",
+  borderRadius: 12,
+  background: "#fff4f4",
+  color: "#a00000",
+  fontWeight: 700,
+  overflowWrap: "anywhere" as const,
 };
