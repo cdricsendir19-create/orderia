@@ -158,7 +158,17 @@ async function createOrder(formData: FormData) {
       )}`,
     );
   } catch (error) {
-    console.error("Orderia create order error:", error);
+  if (
+    error &&
+    typeof error === "object" &&
+    "digest" in error &&
+    typeof (error as { digest?: unknown }).digest === "string" &&
+    (error as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+  ) {
+    throw error;
+  }
+
+  console.error("Orderia create order error:", error);
 
     redirect(
       `/dashboard/orders?error=${encodeURIComponent(
