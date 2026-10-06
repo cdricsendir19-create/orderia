@@ -1,6 +1,7 @@
 generator client {
   provider = "prisma-client-js"
 }
+
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL_UNPOOLED")
@@ -13,11 +14,14 @@ model Merchant {
   email     String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  users     User[]
-  customers Customer[]
-  orders    Order[]
-  shipments Shipment[]
-  providers ShippingProvider[]
+
+  users             User[]
+  customers         Customer[]
+  orders            Order[]
+  shipments         Shipment[]
+  providers         ShippingProvider[]
+  shopifyConnections ShopifyConnection[]
+  externalOrders    ExternalOrder[]
 }
 
 model User {
@@ -26,7 +30,9 @@ model User {
   email      String
   name       String?
   createdAt  DateTime @default(now())
-  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
   @@unique([merchantId, email])
   @@index([merchantId])
 }
@@ -40,26 +46,31 @@ model Customer {
   address    String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  orders     Order[]
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orders   Order[]
+
   @@index([merchantId])
   @@index([merchantId, phone])
 }
 
 model Order {
-  id         String      @id @default(cuid())
+  id         String   @id @default(cuid())
   merchantId String
   customerId String?
-  status     String      @default("pending")
-  total      Int         @default(0)
-  currency   String      @default("DZD")
+  status     String   @default("pending")
+  total      Int      @default(0)
+  currency   String   @default("DZD")
   notes      String?
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  merchant   Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  customer   Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  items      OrderItem[]
-  shipment   Shipment?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant       Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customer       Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items          OrderItem[]
+  shipment       Shipment?
+  externalOrders ExternalOrder[]
+
   @@index([merchantId])
   @@index([merchantId, status])
 }
@@ -71,38 +82,83 @@ model OrderItem {
   title     String
   quantity  Int    @default(1)
   unitPrice Int    @default(0)
-  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
   @@index([orderId])
 }
 
 model Shipment {
-  id          String            @id @default(cuid())
+  id          String   @id @default(cuid())
   merchantId  String
-  orderId     String            @unique
+  orderId     String   @unique
   providerId  String?
   trackingNo  String?
-  method      String            @default("home")
+  method      String   @default("home")
   wilayaId    Int?
-  fee         Int               @default(0)
-  status      String            @default("pending")
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  merchant    Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  provider    ShippingProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  fee         Int      @default(0)
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  order    Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider ShippingProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
   @@index([merchantId])
   @@index([merchantId, status])
 }
 
 model ShippingProvider {
-  id         String     @id @default(cuid())
+  id         String   @id @default(cuid())
   merchantId String
   name       String
   code       String
-  enabled    Boolean    @default(true)
-  createdAt  DateTime   @default(now())
-  merchant   Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  shipments  Shipment[]
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  merchant  Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  shipments Shipment[]
+
   @@unique([merchantId, code])
   @@index([merchantId])
+}
+
+model ShopifyConnection {
+  id          String   @id @default(cuid())
+  merchantId  String
+  shopDomain  String
+  accessToken String
+  scopes      String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant       Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  externalOrders ExternalOrder[]
+
+  @@unique([merchantId, shopDomain])
+  @@index([merchantId])
+  @@index([shopDomain])
+}
+
+model ExternalOrder {
+  id             String   @id @default(cuid())
+  merchantId     String
+  connectionId   String
+  orderId        String
+  platform       String   @default("shopify")
+  externalId     String
+  externalNumber String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  merchant   Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  connection ShopifyConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  order      Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, platform, externalId])
+  @@unique([orderId, platform])
+  @@index([merchantId])
+  @@index([externalId])
 }
