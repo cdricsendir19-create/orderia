@@ -166,7 +166,7 @@ async function createShipment(formData: FormData) {
       .slice(0, 255) || `Commande ${order.id}`;
 
   const imirPath =
-    process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/orders";
+    process.env.IMIR_CREATE_PARCEL_PATH || "/api/v1/create/order
 
   const imirResponse = await imirRequest<unknown>({
     path: imirPath,
