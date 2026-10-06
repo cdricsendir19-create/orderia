@@ -74,33 +74,30 @@ export default async function ShippingPage({
       trackingError =
         "لم يتم العثور على شحنة بهذا الرقم ضمن حسابك.";
     } else {
-      try {
-        const template = process.env.IMIR_TRACKING_PATH;
+  try {
+    const template =
+      process.env.IMIR_TRACKING_PATH ||
+      "/api/v1/track/{tracking}";
 
-        if (!template) {
-          trackingError =
-            "لم يتم إعداد مسار تتبع IMIR بعد.";
-        } else {
-          const path = template.replace(
-            "{tracking}",
-            encodeURIComponent(tracking),
-          );
+    const path = template.replace(
+      "{tracking}",
+      encodeURIComponent(tracking),
+    );
 
-          const data = await imirRequest({ path });
+    const data = await imirRequest({ path });
 
-          trackingResult = {
-            shipment,
-            data,
-          };
-        }
-      } catch (error) {
-        trackingError =
-          error instanceof Error
-            ? error.message
-            : "تعذر الاتصال بـ IMIR.";
-      }
-    }
+    trackingResult = {
+      shipment,
+      data,
+    };
+  } catch (error) {
+    trackingError =
+      error instanceof Error
+        ? error.message
+        : "تعذر الاتصال بـ IMIR.";
   }
+}
+}
 
   return (
     <main
