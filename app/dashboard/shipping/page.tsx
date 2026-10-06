@@ -42,10 +42,10 @@ export default async function ShippingPage({
     shipment: {
       id: string;
       orderId: string;
-      trackingNo: string;
+      trackingNo: string | null;
       status: string;
       method: string;
-      wilayaId: number;
+      wilayaId: number | null;
       fee: number;
     };
     data: unknown;
