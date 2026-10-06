@@ -76,16 +76,15 @@ export default async function ShippingPage({
         } else {
       try {
         const path =
-          process.env.IMIR_TRACKING_PATH ||
-          "api/public/get/trackings/info";
+  process.env.IMIR_TRACKING_PATH ||
+  "api/v1/get/orders?tracking={tracking}";
 
-        const data = await imirRequest({
-          path,
-          method: "POST",
-          body: {
-            trackings: [tracking],
-          },
-        });
+const data = await imirRequest({
+  path: path.replace(
+    "{tracking}",
+    encodeURIComponent(tracking),
+  ),
+});
 
         trackingResult = {
           shipment,
