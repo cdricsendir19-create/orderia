@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getDashboardMerchantId } from "@/lib/dashboard-auth";
+import { registerShopifyOrdersCreateWebhook } from "@/lib/shopify/register-webhook";
 
 export const runtime = "nodejs";
 
@@ -150,7 +151,7 @@ export async function GET(request: Request) {
       );
     }
 
-    await db.shopifyConnection.upsert({
+    const connection = await db.shopifyConnection.upsert({
       where: {
         merchantId_shopDomain: {
           merchantId,
@@ -170,6 +171,26 @@ export async function GET(request: Request) {
         status: "active",
       },
     });
+
+    try {
+      await registerShopifyOrdersCreateWebhook(
+        normalizedShop,
+        connection.accessToken,
+      );
+    } catch (error) {
+      console.error(
+        "Shopify webhook registration failed:",
+        error,
+      );
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Shopify connected but webhook registration failed",
+        },
+        { status: 500 },
+      );
+    }
 
     const response = NextResponse.redirect(
       new URL("/dashboard/shopify", request.url),
