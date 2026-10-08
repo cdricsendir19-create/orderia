@@ -148,9 +148,12 @@ export function mapShopifyOrder(order: ShopifyOrderPayload) {
       wilayaId: null,
     },
 
-    order: {
+       order: {
       status: "pending",
       total,
       currency: clean(order.currency) || "DZD",
       notes: `Shopify ${clean(order.name)}`,
-items,
+      items,
+    },
+  };
+}
