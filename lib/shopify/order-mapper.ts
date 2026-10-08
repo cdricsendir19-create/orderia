@@ -137,7 +137,7 @@ export function mapShopifyOrder(order: ShopifyOrderPayload) {
 
   const total = toInt(order.total_price);
 
-  return {
+    return {
     externalId: clean(order.id ? String(order.id) : ""),
     externalNumber: clean(order.name),
 
@@ -148,12 +148,13 @@ export function mapShopifyOrder(order: ShopifyOrderPayload) {
       wilayaId: null,
     },
 
-       order: {
+    order: {
       status: "pending",
       total,
       currency: clean(order.currency) || "DZD",
       notes: `Shopify ${clean(order.name)}`,
-      items,
     },
+
+    items,
   };
 }
