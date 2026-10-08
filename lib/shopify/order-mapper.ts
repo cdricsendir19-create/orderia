@@ -152,4 +152,5 @@ export function mapShopifyOrder(order: ShopifyOrderPayload) {
       status: "pending",
       total,
       currency: clean(order.currency) || "DZD",
-      notes: `Shopify ${clean(order.name
+      notes: `Shopify ${clean(order.name)}`,
+items,
